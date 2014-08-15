@@ -1,0 +1,14 @@
+SOCKSPort 45679
+ControlPort 45678
+CookieAuthentication 1
+DataDirectory /tmp/exitaddr
+LearnCircuitBuildTimeout 0
+CircuitBuildTimeout 10 seconds
+ClientOnly 1
+UseMicroDescriptors 0
+FetchHidServDescriptors 0
+FetchDirInfoEarly 1
+FetchDirInfoExtraEarly 1
+FetchUselessDescriptors 1
+__DisablePredictedCircuits 1
+__LeaveStreamsUnattached 1
