@@ -6,8 +6,6 @@ import getopt
 import random
 import functools
 
-from sets import Set
-
 import txtorcon
 
 from twisted.internet import reactor, defer
@@ -57,7 +55,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def __init__(self, state, exits, first_hop):
         self.state = state
-        self.exits =  exits  # random.sample(exits, 30)
+        self.exits = exits  # random.sample(exits, 30)
         self.first_hop = first_hop
         self.circuits = {}
         self.ports = {}
@@ -74,7 +72,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
     def build_circuit(self, i):
         dest, r = self.exits[i]
         path = [self.first_hop, r]
-        d = self.state.build_circuit(path)
+        d = self.state.build_circuit(path, using_guards=False)
         d.addCallback(functools.partial(self.set_circuit, dest, r))
         d.addErrback(functools.partial(self.failed, r))
 
@@ -156,7 +154,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         if c is None:
             return  # ignore ... not our circuit
 
-        d = txtorcon.endpoints.available_tcp_port(reactor)
+        d = txtorcon.util.available_tcp_port(reactor)
         d.addCallback(functools.partial(self.set_port, circuit))
         d.addErrback(functools.partial(self.failed, c.router))
 
@@ -177,12 +175,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 def doSetup(state):
     # print "Connected to a Tor version", state.protocol.version
 
-    u = Set(state.routers.keys())
-    v = Set(state.routers_by_name.keys())
-
-    exits = map(lambda k: state.routers[k], list(u.difference(v)))
-    exits = filter(lambda r: "exit" in r.flags, exits)
-
+    exits = filter(lambda r: "exit" in r.flags, state.routers_by_hash.values())
     def lam(r):
         dest = None
         if r.policy:
@@ -199,7 +192,8 @@ def doSetup(state):
     exits = filter(lambda t: t[0] is not None, exits)
 
     if options.first_hop is None:
-        first_hop = random.choice(state.entry_guards.values())
+        # entry_guards will be empty with __DisablePredictedCircuits
+        first_hop = random.choice(state.guards.values())
     else:
         first_hop = state.routers[options.first_hop]
 
@@ -221,8 +215,8 @@ def main():
         opts, args = getopt.gnu_getopt(sys.argv[1:], "hc:s:f:", [
             "help",
             "control_port=",
-            "socks_port",
-            "first_hop"
+            "socks_port=",
+            "first_hop="
         ])
     except getopt.GetoptError as err:
         print str(err)
