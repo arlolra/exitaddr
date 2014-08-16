@@ -1,6 +1,6 @@
 Twisted==14.0.0
 pyOpenSSL==0.14
-txtorcon==0.10.1
-txsocksx==git+https://github.com/arlolra/txtorcon.git@warn
+txtorcon==0.11.0
+txsocksx==1.13.0.3
 service-identity==1.0.0
 pep8==1.5.7

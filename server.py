@@ -16,14 +16,16 @@ from zope.interface import implements
 
 from txsocksx.http import SOCKS5Agent
 
-DEFAULT_CONTROL_PORT = 9051
-DEFAULT_SOCKS_PORT = 9050
+DEFAULT_CONTROL_PORT = 45678
+DEFAULT_SOCKS_PORT = 45679
 
 
 class options(object):
     control_port = DEFAULT_CONTROL_PORT
     socks_port = DEFAULT_SOCKS_PORT
     first_hop = None
+    num_exits = None
+    initiate = 20
 
 
 def usage():
@@ -33,7 +35,8 @@ Usage: %(program_name)s --control_port [PORT]
   -h, --help            print this help message
   -c, --control_port    specify a tor control port (default "%(control_port)s")
   -s, --socks_port      specify a tor socks port (default "%(socks_port)s")
-  -f, --first_hop       the 20-byte fingerprint of a tor relay"
+  -f, --first_hop       the 20-byte fingerprint of a tor relay
+  -n, --num_exits       sample n exits
 """ % {
         "program_name": sys.argv[0],
         "control_port": DEFAULT_CONTROL_PORT,
@@ -55,7 +58,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def __init__(self, state, exits, first_hop):
         self.state = state
-        self.exits = exits  # random.sample(exits, 30)
+        self.exits = exits
         self.first_hop = first_hop
         self.circuits = {}
         self.ports = {}
@@ -63,10 +66,11 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         self.finished = 0
         self.psd = 0
         self.fld = 0
-        self.initiated = 20
+        self.initiated = 0
 
     def start(self):
-        for i in range(0, self.initiated):
+        for i in range(0, options.initiate):
+            self.initiated += 1
             self.build_circuit(i)
     
     def build_circuit(self, i):
@@ -191,6 +195,10 @@ def doSetup(state):
     exits = map(lam, exits)
     exits = filter(lambda t: t[0] is not None, exits)
 
+    if options.num_exits is not None:
+        exits = random.sample(exits, options.num_exits)
+        options.initiate = min(options.initiate, options.num_exits)
+
     if options.first_hop is None:
         # entry_guards will be empty with __DisablePredictedCircuits
         first_hop = random.choice(state.guards.values())
@@ -212,11 +220,12 @@ def setupFailed(arg):
 
 def main():
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], "hc:s:f:", [
+        opts, args = getopt.gnu_getopt(sys.argv[1:], "hc:s:f:n:", [
             "help",
             "control_port=",
             "socks_port=",
-            "first_hop="
+            "first_hop=",
+            "num_exits="
         ])
     except getopt.GetoptError as err:
         print str(err)
@@ -233,6 +242,8 @@ def main():
             options.socks_port = int(a)
         elif o in ("-f", "--first_hop"):
             options.first_hop = a
+        elif o in ("-n", "--num_exits"):
+            options.num_exits = int(a)
         else:
             assert False, "unhandled option"
 
