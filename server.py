@@ -25,6 +25,7 @@ class options(object):
     socks_port = DEFAULT_SOCKS_PORT
     first_hop = None
     num_exits = None
+    exit = None
     initiate = 20
 
 
@@ -35,7 +36,9 @@ Usage: %(program_name)s --control_port [PORT]
   -h, --help            print this help message
   -c, --control_port    specify a tor control port (default "%(control_port)s")
   -s, --socks_port      specify a tor socks port (default "%(socks_port)s")
-  -f, --first_hop       the 20-byte fingerprint of a tor relay
+  -f, --first_hop       the 20-byte fingerprint of a tor relay to use as the\
+                            first hop in the path
+  -e, --exit            the fingerprint of a specific node to exit from
   -n, --num_exits       sample n exits
 """ % {
         "program_name": sys.argv[0],
@@ -72,7 +75,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         for i in range(0, options.initiate):
             self.initiated += 1
             self.build_circuit(i)
-    
+
     def build_circuit(self, i):
         dest, r = self.exits[i]
         path = [self.first_hop, r]
@@ -142,10 +145,12 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         d.addErrback(functools.partial(self.failed, cdrsp.router))
 
         canceler = reactor.callLater(5, d.cancel)
+
         def cancelCanceler(result):
             if canceler.active():
                 canceler.cancel()
             return result
+
         d.addBoth(cancelCanceler)
 
     def set_circuit(self, dest, router, circuit):
@@ -167,7 +172,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
         if c is None:
             return  # ignore ... not our circuit
-        
+
         # print 'Circuit %d failed "%s"' % (circuit.id, kw['REASON'])
         self.failed(c.router, None)
 
@@ -176,11 +181,18 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         self.fini()
 
 
+class CantExitException(Exception):
+    pass
+
+
+def norm(e):
+    return "$"+e.strip().upper()
+
+
 def doSetup(state):
     # print "Connected to a Tor version", state.protocol.version
 
-    exits = filter(lambda r: "exit" in r.flags, state.routers_by_hash.values())
-    def lam(r):
+    def can_exit(r):
         dest = None
         if r.policy:
             for p in [443, 80, 6667]:
@@ -192,18 +204,31 @@ def doSetup(state):
             # print "Can't exit to", r.unique_name
             pass
         return (dest, r)
-    exits = map(lam, exits)
-    exits = filter(lambda t: t[0] is not None, exits)
 
-    if options.num_exits is not None:
-        exits = random.sample(exits, options.num_exits)
-        options.initiate = min(options.initiate, options.num_exits)
+    if options.exit is not None:
+        exit = state.routers_by_hash.get(norm(options.exit), None)
+        if exit is None:
+            raise CantExitException()
+        exit = can_exit(exit)
+        if exit[0] is None:
+            raise CantExitException()
+        exits = [exit]
+        options.initiate = 1
+    else:
+        exits = filter(lambda r: "exit" in r.flags,
+                       state.routers_by_hash.values())
+        exits = map(can_exit, exits)
+        exits = filter(lambda t: t[0] is not None, exits)
+
+        if options.num_exits is not None:
+            exits = random.sample(exits, options.num_exits)
+            options.initiate = min(options.initiate, options.num_exits)
 
     if options.first_hop is None:
         # entry_guards will be empty with __DisablePredictedCircuits
         first_hop = random.choice(state.guards.values())
     else:
-        first_hop = state.routers[options.first_hop]
+        first_hop = state.routers[norm(options.first_hop)]
 
     attacher = Attacher(state, exits, first_hop)
     state.set_attacher(attacher, reactor)
@@ -213,19 +238,23 @@ def doSetup(state):
     attacher.start()
 
 
-def setupFailed(arg):
-    print "setup failed", arg
+def setupFailed(failure):
     reactor.stop()
+    if failure.check(CantExitException):
+        print "Can't exit to", options.exit
+    else:
+        print "Setup failed", failure
 
 
 def main():
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], "hc:s:f:n:", [
+        opts, args = getopt.gnu_getopt(sys.argv[1:], "hc:s:f:n:e:", [
             "help",
             "control_port=",
             "socks_port=",
             "first_hop=",
-            "num_exits="
+            "num_exits=",
+            "exit="
         ])
     except getopt.GetoptError as err:
         print str(err)
@@ -244,6 +273,8 @@ def main():
             options.first_hop = a
         elif o in ("-n", "--num_exits"):
             options.num_exits = int(a)
+        elif o in ("-e", "--exit"):
+            options.exit = a
         else:
             assert False, "unhandled option"
 
