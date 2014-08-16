@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import os
 import sys
 import json
 import getopt
@@ -26,6 +27,7 @@ class options(object):
     first_hop = None
     num_exits = None
     exit = None
+    list = None
     initiate = 20
 
 
@@ -39,6 +41,7 @@ Usage: %(program_name)s --control_port [PORT]
   -f, --first_hop       the 20-byte fingerprint of a tor relay to use as the\
                             first hop in the path
   -e, --exit            the fingerprint of a specific node to exit from
+  -l, --list            path to a list of exits to test
   -n, --num_exits       sample n exits
 """ % {
         "program_name": sys.argv[0],
@@ -72,7 +75,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         self.initiated = 0
 
     def start(self):
-        for i in range(0, options.initiate):
+        for i in range(0, min(options.initiate, len(self.exits))):
             self.initiated += 1
             self.build_circuit(i)
 
@@ -144,7 +147,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         d.addCallback(functools.partial(self.print_body, cdrsp))
         d.addErrback(functools.partial(self.failed, cdrsp.router))
 
-        canceler = reactor.callLater(5, d.cancel)
+        canceler = reactor.callLater(10, d.cancel)
 
         def cancelCanceler(result):
             if canceler.active():
@@ -201,28 +204,36 @@ def doSetup(state):
                     break
         if dest is None:
             # need full descriptors for these
-            # print "Can't exit to", r.unique_name
+            print "Can't exit to", r.unique_name
             pass
         return (dest, r)
 
+    def in_consensus(r):
+        e = state.routers_by_hash.get(norm(r), None)
+        if e is None:
+            print "Not in consensus", r
+        return e
+
     if options.exit is not None:
-        exit = state.routers_by_hash.get(norm(options.exit), None)
+        exit = in_consensus(options.exit)
         if exit is None:
             raise CantExitException()
         exit = can_exit(exit)
         if exit[0] is None:
             raise CantExitException()
         exits = [exit]
-        options.initiate = 1
     else:
-        exits = filter(lambda r: "exit" in r.flags,
-                       state.routers_by_hash.values())
+        if options.list is not None:
+            exits = map(lambda l: in_consensus(l), options.list)
+            exits = filter(lambda r: r is not None, exits)
+        else:
+            exits = state.routers_by_hash.values()
+        exits = filter(lambda r: "exit" in r.flags, exits)
         exits = map(can_exit, exits)
         exits = filter(lambda t: t[0] is not None, exits)
 
         if options.num_exits is not None:
             exits = random.sample(exits, options.num_exits)
-            options.initiate = min(options.initiate, options.num_exits)
 
     if options.first_hop is None:
         # entry_guards will be empty with __DisablePredictedCircuits
@@ -240,21 +251,20 @@ def doSetup(state):
 
 def setupFailed(failure):
     reactor.stop()
-    if failure.check(CantExitException):
-        print "Can't exit to", options.exit
-    else:
+    if not failure.check(CantExitException):
         print "Setup failed", failure
 
 
 def main():
     try:
-        opts, args = getopt.gnu_getopt(sys.argv[1:], "hc:s:f:n:e:", [
+        opts, args = getopt.gnu_getopt(sys.argv[1:], "hc:s:f:n:e:l:", [
             "help",
             "control_port=",
             "socks_port=",
             "first_hop=",
             "num_exits=",
-            "exit="
+            "exit=",
+            "list="
         ])
     except getopt.GetoptError as err:
         print str(err)
@@ -275,6 +285,13 @@ def main():
             options.num_exits = int(a)
         elif o in ("-e", "--exit"):
             options.exit = a
+        elif o in ("-l", "--list"):
+            if not os.path.exists(a):
+                print "List file doesn't exist"
+                sys.exit(1)
+            file = open(a, "r")
+            options.list = file.read().splitlines()
+            file.close()
         else:
             assert False, "unhandled option"
 
