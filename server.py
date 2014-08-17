@@ -195,7 +195,7 @@ def norm(e):
 def doSetup(state):
     # print "Connected to a Tor version", state.protocol.version
 
-    def can_exit(r):
+    def can_exit(r, warn=False):
         dest = None
         if r.policy:
             for p in [443, 80, 6667]:
@@ -204,7 +204,8 @@ def doSetup(state):
                     break
         if dest is None:
             # need full descriptors for these
-            print "Can't exit to", r.unique_name
+            if warn:
+                print "Can't exit to", r.unique_name
             pass
         return (dest, r)
 
@@ -218,7 +219,7 @@ def doSetup(state):
         exit = in_consensus(options.exit)
         if exit is None:
             raise CantExitException()
-        exit = can_exit(exit)
+        exit = can_exit(exit, warn=True)
         if exit[0] is None:
             raise CantExitException()
         exits = [exit]
@@ -226,6 +227,7 @@ def doSetup(state):
         if options.list is not None:
             exits = map(lambda l: in_consensus(l), options.list)
             exits = filter(lambda r: r is not None, exits)
+            can_exit = functools.partial(can_exit, warn=True)
         else:
             exits = state.routers_by_hash.values()
         exits = filter(lambda r: "exit" in r.flags, exits)
@@ -234,6 +236,9 @@ def doSetup(state):
 
         if options.num_exits is not None:
             exits = random.sample(exits, options.num_exits)
+
+    if len(exits) == 0:
+        raise CantExitException
 
     if options.first_hop is None:
         # entry_guards will be empty with __DisablePredictedCircuits
