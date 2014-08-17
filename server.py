@@ -115,7 +115,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
     def stream_failed(self, stream, reason='', remote_reason='', **kw):
         # print 'stream %d failed because %s "%s"' % \
         # (stream.id, reason, remote_reason)
-        self.fini()
+        pass
 
     def attach_stream(self, stream, circuits):
         cdrsp = self.streams[stream.id]
