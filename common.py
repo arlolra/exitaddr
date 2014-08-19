@@ -3,9 +3,13 @@ import random
 import functools
 
 from zope.interface import implements
-from txsocksx.http import SOCKS5Agent
 
+from txsocksx.http import SOCKS5Agent
+from txsocksx import errors as tserrors
+
+from twisted.python import log
 from twisted.web.client import readBody
+from twisted.web._newclient import ResponseNeverReceived
 from twisted.internet import defer
 from twisted.internet.endpoints import TCP4ClientEndpoint
 from twisted.internet.error import ConnectionRefusedError
@@ -56,6 +60,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         self.circuits = {}
         self.ports = {}
         self.streams = {}
+        self.results = {}
         self.finished = 0
         self.initiated = 0
 
@@ -76,6 +81,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         d = self.state.build_circuit(path, using_guards=False)
         d.addCallback(functools.partial(self.set_circuit, dest, r))
         d.addErrback(functools.partial(self.failed, r))
+        d.addErrback(log.err)
 
     def stream_new(self, stream):
         # print "new stream:", stream.id, stream.target_host
@@ -85,15 +91,17 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def report(self, router, passed, ip=None):
         e = self.exitaddr
+
         self.finished += 1
+        result = self.results[router.id_hex[1:]] = (router, ip)
 
         if passed:
-            e.passed(router, ip)
+            e.passed(result)
         else:
-            e.failed(router)
+            e.failed(result)
 
         if self.finished == len(self.exits):
-            e.finished(self.finished)
+            e.finished(self.results)
         elif self.initiated < len(self.exits):
             self.build_circuit(self.initiated)
             self.initiated += 1
@@ -113,7 +121,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def stream_attach(self, stream, circuit):
         # print "stream", stream.id, "attached to circuit", circuit.id
-        # print self.circuits[circuit.id].router.unique_name
+        # print self.circuits[circuit.id].router.id_hex[1:]
         # print "with path:", '->'.join(map(lambda x: x.location.countrycode,
         #                                   circuit.path))
         pass
@@ -136,10 +144,12 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         d = agent.request("GET", "https://check.torproject.org/api/ip")  # port
         d.addCallback(readBody)
         d.addCallback(functools.partial(self.print_body, cdrsp))
-        d.addErrback(functools.partial(self.failed, cdrsp.router))
 
-        canceler = e.reactor.callLater(10, d.cancel)
+        canceler = e.reactor.callLater(15, d.cancel)
         d.addBoth(functools.partial(cancelCanceler, canceler))
+
+        d.addErrback(functools.partial(self.failed, cdrsp.router))
+        d.addErrback(log.err)
 
     def set_circuit(self, dest, router, circuit):
         cdrsp = CDRSP(circuit, dest, router)
@@ -154,6 +164,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         d = txtorcon.util.available_tcp_port(self.exitaddr.reactor)
         d.addCallback(functools.partial(self.set_port, circuit))
         d.addErrback(functools.partial(self.failed, c.router))
+        d.addErrback(log.err)
 
     def circuit_failed(self, circuit, **kw):
         c = self.circuits.get(circuit.id, None)
@@ -162,32 +173,37 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
             return  # ignore ... not our circuit
 
         # print 'Circuit %d failed "%s"' % (circuit.id, kw['REASON'])
-        self.failed(c.router, None)
+        self.report(c.router, False)
 
-    def failed(self, r, err):
-        # print err
-        self.report(r, False)
+    def failed(self, router, failure):
+        if failure.check(defer.CancelledError):
+            print "cancel"
+        failure.trap(defer.CancelledError,
+                     tserrors.ConnectionRefused,
+                     tserrors.HostUnreachable,
+                     ResponseNeverReceived)
+        self.report(router, False)
 
 
-def can_exit(r, warn=False):
+def can_exit(router, warn=False):
     dest = None
-    if r.policy:
+    if router.policy:
         for p in [443, 80, 6667]:
-            if r.accepts_port(p):
+            if router.accepts_port(p):
                 dest = p
                 break
     if dest is None:
         # need full descriptors for these
         if warn:
-            print "Can't exit to", r.unique_name
+            print "Can't exit to", router.id_hex[1:]
         pass
-    return (dest, r)
+    return (dest, router)
 
 
-def in_consensus(state, r):
-    e = state.routers_by_hash.get(norm(r), None)
+def in_consensus(state, router):
+    e = state.routers_by_hash.get(norm(router), None)
     if e is None:
-        print "Not in consensus", r
+        print "Not in consensus", router
     return e
 
 
@@ -200,7 +216,8 @@ class Exitaddr(object):
         connection = TCP4ClientEndpoint(self.reactor, "localhost",
                                         self.options.control_port)
         d = txtorcon.build_tor_connection(connection)
-        d.addCallback(self.setup_success).addErrback(self.setup_failed)
+        d.addCallback(self.setup_success)
+        d.addErrback(self.setup_failed)
         try:
             self.reactor.run()
         except KeyboardInterrupt:
@@ -242,11 +259,11 @@ class Exitaddr(object):
         attacher = Attacher(state, exits, first_hop, self)
         attacher.start()
 
-    def passed(self, router, ip):
+    def passed(self, result):
         raise NotImplementedError
 
-    def failed(self, router):
+    def failed(self, result):
         raise NotImplementedError
 
-    def finished(self, total):
+    def finished(self, results):
         raise NotImplementedError

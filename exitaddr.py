@@ -36,19 +36,19 @@ class CLI(Exitaddr):
         self.psd = 0
         self.fld = 0
 
-    def passed(self, router, ip):
-        print router.unique_name[1:], ip
+    def passed(self, result):
+        print result[0].id_hex[1:], result[1]
         self.psd += 1
 
-    def failed(self, router):
-        print router.unique_name[1:], "failed"
+    def failed(self, result):
+        print result[0].id_hex[1:], "failed"
         self.fld += 1
 
-    def finished(self, total):
+    def finished(self, results):
         print ""
         print "passed", self.psd
         print "failed", self.fld
-        print "total", total
+        print "total", len(results)
         reactor.stop()
 
 

@@ -10,6 +10,11 @@ from common import Exitaddr, options
 DEFAULT_PORT = 8080
 
 
+def addHeader(request):
+    request.responseHeaders.addRawHeader(b"content-type",
+                                         b"application/json")
+
+
 class Res(resource.Resource):
     def getChild(self, name, request):
         ''' handle trailing / '''
@@ -38,9 +43,18 @@ class IP(Res):
         return json.dumps(response)
 
 
-def addHeader(request):
-    request.responseHeaders.addRawHeader(b"content-type",
-                                         b"application/json")
+class Ser(Exitaddr):
+    def __init__(self, *args, **kwargs):
+        Exitaddr.__init__(self, *args, **kwargs)
+
+    def passed(self, result):
+        pass
+
+    def failed(self, result):
+        pass
+
+    def finished(self, results):
+        pass
 
 
 def main():
@@ -48,7 +62,7 @@ def main():
     root.putChild("exits", Exits())
     root.putChild("ip", IP())
     reactor.listenTCP(DEFAULT_PORT, server.Site(root))
-    exitaddr = Exitaddr(reactor, options)
+    exitaddr = Ser(reactor, options)
     exitaddr.start()
 
 
