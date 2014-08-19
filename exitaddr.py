@@ -30,6 +30,28 @@ Usage: %(program_name)s --control_port [PORT]
     }
 
 
+class CLI(Exitaddr):
+    def __init__(self, *args, **kwargs):
+        Exitaddr.__init__(self, *args, **kwargs)
+        self.psd = 0
+        self.fld = 0
+
+    def passed(self, router, ip):
+        print router.unique_name[1:], ip
+        self.psd += 1
+
+    def failed(self, router):
+        print router.unique_name[1:], "failed"
+        self.fld += 1
+
+    def finished(self, total):
+        print ""
+        print "passed", self.psd
+        print "failed", self.fld
+        print "total", total
+        reactor.stop()
+
+
 def main():
     try:
         opts, args = getopt.gnu_getopt(sys.argv[1:], "hc:s:f:n:e:l:", [
@@ -70,7 +92,7 @@ def main():
         else:
             assert False, "unhandled option"
 
-    exitaddr = Exitaddr(reactor, options)
+    exitaddr = CLI(reactor, options)
     exitaddr.start()
 
 

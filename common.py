@@ -57,8 +57,6 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         self.ports = {}
         self.streams = {}
         self.finished = 0
-        self.psd = 0
-        self.fld = 0
         self.initiated = 0
 
     def start(self):
@@ -85,18 +83,17 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         cdrsp.stream = stream
         self.streams[stream.id] = cdrsp
 
-    def fini(self, psd=False):
+    def report(self, router, passed, ip=None):
+        e = self.exitaddr
         self.finished += 1
-        if psd:
-            self.psd += 1
+
+        if passed:
+            e.passed(router, ip)
         else:
-            self.fld += 1
+            e.failed(router)
+
         if self.finished == len(self.exits):
-            print ""
-            print "passed", self.psd
-            print "failed", self.fld
-            print "total", self.finished
-            self.exitaddr.reactor.stop()
+            e.finished(self.finished)
         elif self.initiated < len(self.exits):
             self.build_circuit(self.initiated)
             self.initiated += 1
@@ -123,8 +120,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def print_body(self, cdrsp, body):
         j = json.loads(body)
-        print cdrsp.router.unique_name[1:], j["IP"]
-        self.fini(True)
+        self.report(cdrsp.router, True, j["IP"])
 
     def set_port(self, circuit, port):
         e = self.exitaddr
@@ -169,8 +165,8 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         self.failed(c.router, None)
 
     def failed(self, r, err):
-        print r.unique_name[1:], "failed"
-        self.fini()
+        # print err
+        self.report(r, False)
 
 
 def can_exit(r, warn=False):
@@ -245,3 +241,12 @@ class Exitaddr(object):
 
         attacher = Attacher(state, exits, first_hop, self)
         attacher.start()
+
+    def passed(self, router, ip):
+        raise NotImplementedError
+
+    def failed(self, router):
+        raise NotImplementedError
+
+    def finished(self, total):
+        raise NotImplementedError
