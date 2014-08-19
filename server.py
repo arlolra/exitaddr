@@ -9,10 +9,12 @@ from common import Exitaddr, options
 
 DEFAULT_PORT = 8080
 
+exitaddr_results = None
+
 
 def addHeader(request):
-    request.responseHeaders.addRawHeader(b"content-type",
-                                         b"application/json")
+    h = request.responseHeaders
+    h.addRawHeader(b"content-type", b"application/json")
 
 
 class Res(resource.Resource):
@@ -26,9 +28,8 @@ class Res(resource.Resource):
 class Exits(Res):
     ''' json dump of our state '''
     def render_GET(self, request):
-        response = {}
         addHeader(request)
-        return json.dumps(response)
+        return json.dumps(exitaddr_results)
 
 
 class IP(Res):
@@ -54,7 +55,12 @@ class Ser(Exitaddr):
         pass
 
     def finished(self, results):
-        pass
+        global exitaddr_results
+        res = {}
+        for key in results.keys():
+            res[key] = results[key][1]
+        exitaddr_results = res
+        print "exit list ready!"
 
 
 def main():
@@ -62,7 +68,12 @@ def main():
     root.putChild("exits", Exits())
     root.putChild("ip", IP())
     reactor.listenTCP(DEFAULT_PORT, server.Site(root))
+
+    # sample a few for now
+    options.num_exits = 25
+
     exitaddr = Ser(reactor, options)
+    print "listening on", DEFAULT_PORT
     exitaddr.start()
 
 

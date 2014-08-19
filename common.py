@@ -187,7 +187,8 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def failed(self, router, reason, failure):
         # trap these errors when confident
-        if not failure.check(tserrors.ConnectionRefused,
+        if not failure.check(defer.CancelledError,
+                             tserrors.ConnectionRefused,
                              tserrors.HostUnreachable,
                              ResponseNeverReceived):
             log.err(reason)
