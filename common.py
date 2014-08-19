@@ -80,7 +80,7 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         path = [self.first_hop, r]
         d = self.state.build_circuit(path, using_guards=False)
         d.addCallback(functools.partial(self.set_circuit, dest, r))
-        d.addErrback(functools.partial(self.failed, r))
+        d.addErrback(functools.partial(self.failed, r, "build_circuit"))
         d.addErrback(log.err)
 
     def stream_new(self, stream):
@@ -95,10 +95,13 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         self.finished += 1
         result = self.results[router.id_hex[1:]] = (router, ip)
 
-        if passed:
-            e.passed(result)
-        else:
-            e.failed(result)
+        try:
+            if passed:
+                e.passed(result)
+            else:
+                e.failed(result)
+        except Exception as err:
+            log.err(err)
 
         if self.finished == len(self.exits):
             e.finished(self.results)
@@ -127,8 +130,13 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         pass
 
     def print_body(self, cdrsp, body):
-        j = json.loads(body)
-        self.report(cdrsp.router, True, j["IP"])
+        ip = None
+        try:
+            j = json.loads(body)
+            ip = j["IP"]
+        except Exception as err:
+            log.err(err)
+        self.report(cdrsp.router, True, ip)
 
     def set_port(self, circuit, port):
         e = self.exitaddr
@@ -148,7 +156,8 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         canceler = e.reactor.callLater(15, d.cancel)
         d.addBoth(functools.partial(cancelCanceler, canceler))
 
-        d.addErrback(functools.partial(self.failed, cdrsp.router))
+        d.addErrback(functools.partial(self.failed, cdrsp.router,
+                                       "socks5agent"))
         d.addErrback(log.err)
 
     def set_circuit(self, dest, router, circuit):
@@ -163,7 +172,8 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
         d = txtorcon.util.available_tcp_port(self.exitaddr.reactor)
         d.addCallback(functools.partial(self.set_port, circuit))
-        d.addErrback(functools.partial(self.failed, c.router))
+        d.addErrback(functools.partial(self.failed, c.router,
+                                       "available_tcp_port"))
         d.addErrback(log.err)
 
     def circuit_failed(self, circuit, **kw):
@@ -175,13 +185,13 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         # print 'Circuit %d failed "%s"' % (circuit.id, kw['REASON'])
         self.report(c.router, False)
 
-    def failed(self, router, failure):
-        if failure.check(defer.CancelledError):
-            print "cancel"
-        failure.trap(defer.CancelledError,
-                     tserrors.ConnectionRefused,
-                     tserrors.HostUnreachable,
-                     ResponseNeverReceived)
+    def failed(self, router, reason, failure):
+        # trap these errors when confident
+        if not failure.check(tserrors.ConnectionRefused,
+                             tserrors.HostUnreachable,
+                             ResponseNeverReceived):
+            log.err(reason)
+            log.err(failure.value)
         self.report(router, False)
 
 
