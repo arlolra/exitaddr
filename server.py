@@ -29,7 +29,7 @@ class Exits(Res):
     ''' json dump of our state '''
     def render_GET(self, request):
         addHeader(request)
-        return json.dumps(exitaddr_results)
+        return json.dumps(exitaddr_results, indent=4)
 
 
 class IP(Res):
@@ -41,18 +41,20 @@ class IP(Res):
             host = header.split(',')[-1].strip()
         response = {"IP": host}
         addHeader(request)
-        return json.dumps(response)
+        return json.dumps(response, indent=4)
 
 
 class Ser(Exitaddr):
     def __init__(self, *args, **kwargs):
         Exitaddr.__init__(self, *args, **kwargs)
+        self.fld = 0
 
     def passed(self, result):
         pass
 
     def failed(self, result):
-        pass
+        print result[0].id_hex[1:], "failed"
+        self.fld += 1
 
     def finished(self, results):
         global exitaddr_results
@@ -60,6 +62,8 @@ class Ser(Exitaddr):
         for key in results.keys():
             res[key] = results[key][1]
         exitaddr_results = res
+        print ""
+        print "failed", self.fld
         print "exit list ready!"
 
 

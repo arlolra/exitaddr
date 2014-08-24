@@ -66,7 +66,6 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def start(self):
         e = self.exitaddr
-
         self.state.set_attacher(self, e.reactor)
         self.state.add_circuit_listener(self)
         self.state.add_stream_listener(self)
@@ -85,13 +84,14 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def stream_new(self, stream):
         # print "new stream:", stream.id, stream.target_host
-        cdrsp = self.ports[stream.source_port]
+        cdrsp = self.ports.get(stream.source_port, None)
+        if cdrsp is None:
+            return  # ignore ... not our stream
         cdrsp.stream = stream
         self.streams[stream.id] = cdrsp
 
     def report(self, router, passed, ip=None):
         e = self.exitaddr
-
         self.finished += 1
         result = self.results[router.id_hex[1:]] = (router, ip)
 
@@ -119,7 +119,9 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         pass
 
     def attach_stream(self, stream, circuits):
-        cdrsp = self.streams[stream.id]
+        cdrsp = self.streams.get(stream.id, None)
+        if cdrsp is None:
+            return  # ignore ... not our stream
         return cdrsp.circuit
 
     def stream_attach(self, stream, circuit):
@@ -140,7 +142,6 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def set_port(self, circuit, port):
         e = self.exitaddr
-
         cdrsp = self.circuits[circuit.id]
         cdrsp.port = port
         self.ports[port] = cdrsp
@@ -166,10 +167,8 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def circuit_built(self, circuit):
         c = self.circuits.get(circuit.id, None)
-
         if c is None:
             return  # ignore ... not our circuit
-
         d = txtorcon.util.available_tcp_port(self.exitaddr.reactor)
         d.addCallback(functools.partial(self.set_port, circuit))
         d.addErrback(functools.partial(self.failed, c.router,
@@ -178,10 +177,8 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
 
     def circuit_failed(self, circuit, **kw):
         c = self.circuits.get(circuit.id, None)
-
         if c is None:
             return  # ignore ... not our circuit
-
         # print 'Circuit %d failed "%s"' % (circuit.id, kw['REASON'])
         self.report(c.router, False)
 
