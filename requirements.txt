@@ -3,4 +3,5 @@ pyOpenSSL==0.14
 txtorcon==0.11.0
 txsocksx==1.13.0.3
 service-identity==1.0.0
+stem==1.2.2
 pep8==1.5.7
