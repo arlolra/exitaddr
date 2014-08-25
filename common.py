@@ -14,8 +14,12 @@ from twisted.internet import defer
 from twisted.internet.endpoints import TCP4ClientEndpoint
 from twisted.internet.error import ConnectionRefusedError
 
+from stem.control import Controller
+
 import txtorcon
 
+#CHECK_IP = "38.229.72.22"
+CHECK_IP = "107.170.31.200"  # ipinfo.io support http(s)
 
 class options(object):
     control_port = 45678
@@ -134,8 +138,9 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
     def print_body(self, cdrsp, body):
         ip = None
         try:
-            j = json.loads(body)
-            ip = j["IP"]
+            # j = json.loads(body)
+            # ip = j["IP"]
+            ip = body.replace("::ffff:", "").strip()
         except Exception as err:
             log.err(err)
         self.report(cdrsp.router, True, ip)
@@ -150,7 +155,9 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
                                         e.options.socks_port,
                                         bindAddress=bindAddress)
         agent = SOCKS5Agent(e.reactor, proxyEndpoint=sockspoint)
-        d = agent.request("GET", "https://check.torproject.org/api/ip")  # port
+        # check.torproject.org/api/ip
+        url = "http%s://ipinfo.io/ip" % ("s" if cdrsp.dest == 443 else "")
+        d = agent.request("GET", url)
         d.addCallback(readBody)
         d.addCallback(functools.partial(self.print_body, cdrsp))
 
@@ -193,18 +200,24 @@ class Attacher(txtorcon.CircuitListenerMixin, txtorcon.StreamListenerMixin):
         self.report(router, False)
 
 
-def can_exit(router, warn=False):
+def can_exit(descriptors, router, warn=False):
     dest = None
-    if router.policy:
-        for p in [443, 80, 6667]:
-            if router.accepts_port(p):
-                dest = p
-                break
+    desc = descriptors.get(router.id_hex[1:], None)
+
+    if desc is None:
+        if warn:
+            print "No descriptor for", router.id_hex[1:]
+        return (None, router)
+
+    for port in [443, 80]:  # 6667
+        if desc.exit_policy.can_exit_to(CHECK_IP, port):
+            dest = port
+            break
+
     if dest is None:
-        # need full descriptors for these
         if warn:
             print "Can't exit to", router.id_hex[1:]
-        pass
+
     return (dest, router)
 
 
@@ -235,25 +248,45 @@ class Exitaddr(object):
         self.reactor.stop()
         if failure.check(ConnectionRefusedError):
             print "Connection refused. Is tor running?"
-        elif not failure.check(CantExitException):
+        elif failure.check(CantExitException):
+            print "No exits to test"
+        else:
             print "Setup failed", failure
 
-    def setup_success(self, state):
+    def determine_exits(self, state):
         global can_exit
-        options = self.options
 
         if options.exits is not None:
             exits = map(lambda l: in_consensus(state, l), options.exits)
             exits = filter(lambda r: r is not None, exits)
-            can_exit = functools.partial(can_exit, warn=True)
         else:
             exits = state.routers_by_hash.values()
         exits = filter(lambda r: "exit" in r.flags, exits)
-        exits = map(can_exit, exits)
+
+        # get descriptors from stem
+        con = Controller.from_port(port = self.options.control_port)
+        con.authenticate()
+        descriptors = {}
+        for desc in con.get_server_descriptors():
+            descriptors[desc.fingerprint] = desc
+        con.close()
+
+        can_exit_func = functools.partial(can_exit, descriptors,
+                                     warn=not options.num_exits)
+        exits = map(can_exit_func, exits)
         exits = filter(lambda t: t[0] is not None, exits)
 
         if options.num_exits is not None:
-            exits = random.sample(exits, options.num_exits)
+            if options.num_exits > len(exits):
+                print "Not enough exits. Giving you all I've got."
+            else:
+                exits = random.sample(exits, options.num_exits)
+
+        return exits
+
+    def setup_success(self, state):
+        options = self.options
+        exits = self.determine_exits(state)
 
         if len(exits) == 0:
             raise CantExitException
